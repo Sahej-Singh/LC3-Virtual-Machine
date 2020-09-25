@@ -66,6 +66,16 @@ enum
     FL_NEG = 1 << 2, /* N */
 };
 
+enum 
+{
+	TRAP_GETC = 0 ,
+	TRAP_OUT ,
+	TRAP_PUTS ,
+	TRAP_IN ,
+	TRAP_PUTSP ,
+	TRAP_HALT
+};
+
 /* Register storage */
 uint16_t reg[R_COUNT];
 
@@ -73,6 +83,11 @@ uint16_t reg[R_COUNT];
 uint16_t memory[UINT16_MAX];
 
 //copy pasted Setup
+
+uint16_t swap16(uint16_t x)
+{
+    return (x << 8) | (x >> 8);
+}
 /* Read Image File */
 void read_image_file(FILE* file)
 {
@@ -403,6 +418,79 @@ int main(int argc, const char* argv[])
 				}
 
 				break;
+
+			case OP_LD:
+				{
+					uint16_t r0 = (instr >> 9) & 0x7;
+					uint16_t pc_offset = sign_extend(instr & 0x1FF, 9);
+					reg[r0] = mem_read(reg[R_PC] + pc_offset);
+					update_flags(r0);
+				}
+
+				break;
+
+			case OP_TRAP:
+				{
+					switch (instr & 0xFF)
+					{
+						case TRAP_GETC:
+							{
+								reg[R_R0] = (uint16_t)getchar();
+							}
+							break;
+
+						case TRAP_OUT:
+							{
+								putc((char)reg[R_R0], stdout);
+								fflush(stdout);
+							}
+							break;
+
+						case TRAP_PUTS:
+							{
+								uint16_t* c = memory + reg[R_R0];
+								while (*c)
+								{
+									putc((char)*c, stdout);
+									++c;
+								}
+								fflush(stdout);							
+							}
+							break;
+
+						case TRAP_IN:
+							{
+								puts("Enter a character: ");
+								char c = getchar();
+								putc(c, stdout);
+								reg[R_R0] = (uint16_t)c;
+							}
+							break;
+
+						case TRAP_PUTSP:
+							{
+								uint16_t* c = memory + reg[R_R0];
+								while (*c)
+								{
+							        char char1 = (*c) & 0xFF;
+							        putc(char1, stdout);
+							        char char2 = (*c) >> 8;
+							        if (char2) putc(char2, stdout);
+							        ++c;
+							    }
+							    fflush(stdout);
+							}
+							break;
+
+						case TRAP_HALT:
+							{
+								puts("Halting Machine");
+								fflush(stdout);
+								running = 0;
+							}
+							break;
+					}
+				}
 		}
 	}
 }
