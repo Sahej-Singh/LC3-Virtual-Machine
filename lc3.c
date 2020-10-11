@@ -32,12 +32,6 @@ enum
 	R_COUNT 
 };
 
-// memory mapped regs
-enum
-{
-    MR_KBSR = 0xFE00, /* keyboard status */
-    MR_KBDR = 0xFE02  /* keyboard data */
-};
 
 enum
 {
@@ -66,28 +60,58 @@ enum
     FL_NEG = 1 << 2, /* N */
 };
 
+// memory mapped regs
+enum
+{
+    MR_KBSR = 0xFE00, /* keyboard status */
+    MR_KBDR = 0xFE02  /* keyboard data */
+};
 enum 
 {
-	TRAP_GETC = 0 ,
-	TRAP_OUT ,
-	TRAP_PUTS ,
-	TRAP_IN ,
-	TRAP_PUTSP ,
-	TRAP_HALT
+	TRAP_GETC = 0x20,
+	TRAP_OUT = 0x21,
+	TRAP_PUTS = 0x22,
+	TRAP_IN = 0x23,
+	TRAP_PUTSP = 0x24,
+	TRAP_HALT = 0x25
 };
-
-/* Register storage */
-uint16_t reg[R_COUNT];
 
 /* Memory */
 uint16_t memory[UINT16_MAX];
 
+/* Register storage */
+uint16_t reg[R_COUNT];
+
 //copy pasted Setup
+uint16_t sign_extend(uint16_t x, int bit_count)
+{
+	if ((x >> (bit_count - 1)) & 1) {
+		x |= (0xFFFF << bit_count);
+	}
+	return x;
+}
 
 uint16_t swap16(uint16_t x)
 {
     return (x << 8) | (x >> 8);
 }
+
+void update_flags(uint16_t r)
+{
+    if (reg[r] == 0)
+    {
+        reg[R_COND] = FL_ZRO;
+    }
+    else if (reg[r] >> 15) /* a 1 in the left-most bit indicates negative */
+    {
+        reg[R_COND] = FL_NEG;
+    }
+    else
+    {
+        reg[R_COND] = FL_POS;
+    }
+}
+
 /* Read Image File */
 void read_image_file(FILE* file)
 {
@@ -155,31 +179,6 @@ uint16_t mem_read(uint16_t address)
     return memory[address];
 }
 
-uint16_t sign_extend(uint16_t x, int bit_count)
-{
-	if ((x >> (bit_count - 1)) & 1) {
-		x |= (0xFFFF << bit_count);
-	}
-	return x;
-}
-
-void update_flags(uint16_t r)
-{
-    if (reg[r] == 0)
-    {
-        reg[R_COND] = FL_ZRO;
-    }
-    else if (reg[r] >> 15) /* a 1 in the left-most bit indicates negative */
-    {
-        reg[R_COND] = FL_NEG;
-    }
-    else
-    {
-        reg[R_COND] = FL_POS;
-    }
-} 
-
-
 /* Input Buffering */
 struct termios original_tio;
 
@@ -224,6 +223,8 @@ int main(int argc, const char* argv[])
         }
     }
 
+    signal(SIGINT, handle_interrupt);
+    disable_input_buffering();
     /* Setup */
 	//stuff 
 	/*
@@ -263,8 +264,8 @@ int main(int argc, const char* argv[])
 					}
 					else
 					{
-						uint16_t r2 = (instr >> 2) & 0x7;
-						reg[0] = reg[r1] + reg[r2];
+						uint16_t r2 = instr & 0x7;
+						reg[r0] = reg[r1] + reg[r2];
 					}
 					
 					update_flags(r0);
@@ -288,7 +289,7 @@ int main(int argc, const char* argv[])
 					}
 					else
 					{
-						uint16_t r2 = (instr >> 2) & 0x7;
+						uint16_t r2 = instr & 0x7;
 						reg[r0] = reg[r1] + reg[r2];
 					}
 
@@ -300,7 +301,7 @@ int main(int argc, const char* argv[])
 			case OP_LDI:
 				{
 					//dest. reg
-					uint16_t r0 = (instr >> 12) & 0x7;
+					uint16_t r0 = (instr >> 9) & 0x7;
 					uint16_t pc_offset = sign_extend(instr & 0x1FF, 9);
 					reg[r0] = mem_read(mem_read(reg[R_PC] + pc_offset));
 					update_flags(r0);
@@ -323,7 +324,7 @@ int main(int argc, const char* argv[])
 			case OP_BR:
 				{
 					uint16_t pc_offset = sign_extend(instr & 0x1FF, 9);
-					uint16_t cond_flag = instr >> 9;
+					uint16_t cond_flag = (instr >> 9) & 0x7;
 					if (cond_flag & reg[R_COND])
 					{
 						reg[R_PC] = reg[R_PC] + pc_offset;
@@ -343,7 +344,7 @@ int main(int argc, const char* argv[])
 			case OP_JSR:
 				{
 					reg[R_R7] = reg[R_PC];		
-					uint16_t jsrr_flag = (instr >> 11) & 0x1;
+					uint16_t jsrr_flag = (instr >> 11) & 1;
 					if (!jsrr_flag)
 					{
 						uint16_t r1 = (instr >> 6) & 0x7;		
@@ -351,7 +352,8 @@ int main(int argc, const char* argv[])
 					}
 					else 
 					{
-						reg[R_PC] += sign_extend(instr & 0x7FF, 11);
+						uint16_t pc_offset = sign_extend(instr & 0x7FF, 11);
+						reg[R_PC] += pc_offset;
 					}
 
 				}
@@ -360,8 +362,8 @@ int main(int argc, const char* argv[])
 
 			case OP_ST:
 				{
-					uint16_t r1 = (instr >> 9) & 0x7;
-					mem_write(reg[R_PC] + sign_extend(0x1FF, 9), reg[r1]);
+					uint16_t r0 = (instr >> 9) & 0x7;
+					mem_write(reg[R_PC] + sign_extend(instr & 0x1FF, 9), reg[r0]);
 				}
 
 				break;
@@ -372,7 +374,7 @@ int main(int argc, const char* argv[])
 					uint16_t r1 = (instr >> 9) & 0x7;
 					//base reg
 					uint16_t r2 = (instr >> 6) & 0x7;
-					reg[r1] = mem_read(reg[r2] + sign_extend((instr >> 5) & 0x3F, 6));
+					reg[r1] = mem_read(reg[r2] + sign_extend(instr & 0x3F, 6));
 					update_flags(r1);
 				}
 
@@ -385,6 +387,8 @@ int main(int argc, const char* argv[])
 					uint16_t pc_offset = sign_extend(instr & 0x3F, 6);
 					mem_write(reg[r2] + pc_offset, reg[r1]);
 				}
+
+				break;
 			
 			case OP_RTI:
 				{
@@ -483,15 +487,14 @@ int main(int argc, const char* argv[])
 							break;
 
 						case TRAP_HALT:
-							{
 								puts("Halting Machine");
 								fflush(stdout);
 								running = 0;
-							}
 							break;
 					}
 				}
 		}
 	}
+	restore_input_buffering();
 }
 
